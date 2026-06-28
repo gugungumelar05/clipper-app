@@ -6,6 +6,10 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import { v4 as uuidv4 } from "uuid";
 import ffmpeg from "fluent-ffmpeg";
+import { exec } from "child_process";
+import { promisify } from "util";
+
+const execAsync = promisify(exec);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -168,6 +172,56 @@ app.post("/api/clip", async (req, res) => {
     console.error(err);
     if (!res.headersSent) res.status(500).json({ error: err.message });
   }
+});
+
+// Download video from a URL (YouTube, etc.) using yt-dlp, then return it like a normal upload
+app.post("/api/download-from-url", async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url || typeof url !== "string" || !url.trim()) {
+      return res.status(400).json({ error: "URL wajib diisi" });
+    }
+
+    // Basic safety: only allow http(s) URLs
+    if (!/^https?:\/\//i.test(url.trim())) {
+      return res.status(400).json({ error: "URL tidak valid" });
+    }
+
+    const fileId = `${uuidv4()}.mp4`;
+    const outputPath = path.join(UPLOAD_DIR, fileId);
+
+    // yt-dlp downloads the video, merges best video+audio, outputs as mp4
+    const safeUrl = url.trim().replace(/"/g, "");
+    const cmd = `yt-dlp -f "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/best" --merge-output-format mp4 -o "${outputPath}" "${safeUrl}"`;
+
+    console.log("Running yt-dlp:", cmd);
+    await execAsync(cmd, { maxBuffer: 1024 * 1024 * 50, timeout: 5 * 60 * 1000 });
+
+    if (!fs.existsSync(outputPath)) {
+      return res.status(500).json({ error: "Download gagal, file tidak ditemukan setelah proses" });
+    }
+
+    const info = await getVideoInfo(outputPath);
+    res.json({
+      fileId,
+      originalName: safeUrl,
+      ...info,
+    });
+  } catch (err) {
+    console.error("yt-dlp error:", err.message);
+    res.status(500).json({
+      error:
+        "Gagal mengunduh video dari link ini. Pastikan link valid dan videonya bisa diakses publik. Detail: " +
+        err.message.slice(0, 200),
+    });
+  }
+});
+
+// Stream an uploaded/downloaded source file for preview in the <video> tag
+app.get("/api/preview/:fileId", (req, res) => {
+  const filePath = path.join(UPLOAD_DIR, req.params.fileId);
+  if (!fs.existsSync(filePath)) return res.status(404).send("File tidak ditemukan");
+  res.sendFile(filePath);
 });
 
 // Health check
