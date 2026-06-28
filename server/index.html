@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Clipper — Potong & Siapkan Klip</title>
+<style>
+  :root{
+    --bg: #0E0F12;
+    --panel: #17181D;
+    --panel-2: #1D1F26;
+    --line: #2A2C34;
+    --text: #EDEDEF;
+    --text-dim: #9A9CA6;
+    --accent: #FF5A36;
+    --accent-dim: #C84326;
+    --ok: #3DDC84;
+    --warn: #FFC857;
+    --radius: 10px;
+    --mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  *{ box-sizing: border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+  }
+
+  .wrap{
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: 28px 20px 80px;
+  }
+
+  header{
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    margin-bottom: 28px;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 18px;
+  }
+  header h1{
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin:0;
+    display:flex;
+    align-items:center;
+    gap:10px;
+  }
+  header h1 .dot{
+    width:8px;height:8px;border-radius:50%;
+    background: var(--accent);
+    display:inline-block;
+  }
+  header .sub{
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .panel{
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 22px;
+    margin-bottom: 20px;
+  }
+
+  .panel h2{
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--text-dim);
+    margin: 0 0 16px;
+    font-weight: 600;
+  }
+
+  /* Dropzone */
+  .dropzone{
+    border: 1.5px dashed var(--line);
+    border-radius: var(--radius);
+    padding: 40px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .dropzone:hover, .dropzone.drag{
+    border-color: var(--accent);
+    background: rgba(255,90,54,0.04);
+  }
+  .dropzone p{ margin: 6px 0; color: var(--text-dim); font-size: 14px; }
+  .dropzone .big{ color: var(--text); font-size: 15px; font-weight: 600; }
+  .dropzone input{ display:none; }
+
+  /* Video + controls layout */
+  .editor{
+    display:grid;
+    grid-template-columns: 1.3fr 1fr;
+    gap: 20px;
+  }
+  @media (max-width: 760px){
+    .editor{ grid-template-columns: 1fr; }
+  }
+
+  video{
+    width:100%;
+    border-radius: var(--radius);
+    background:#000;
+    display:block;
+  }
+
+  .field{
+    margin-bottom: 16px;
+  }
+  .field label{
+    display:block;
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+    font-family: var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .row2{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  input[type="number"], input[type="text"], select{
+    width:100%;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 7px;
+    font-size: 14px;
+    font-family: var(--sans);
+  }
+  input[type="number"]:focus, input[type="text"]:focus, select:focus{
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .toggle-row{
+    display:flex;
+    align-items:center;
+    justify-content: space-between;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 10px 12px;
+    margin-bottom: 16px;
+  }
+  .toggle-row span{ font-size: 14px; }
+  .switch{
+    position: relative;
+    width: 40px; height: 22px;
+    background: var(--line);
+    border-radius: 20px;
+    cursor: pointer;
+    transition: background .15s;
+    flex-shrink:0;
+  }
+  .switch.on{ background: var(--accent); }
+  .switch::after{
+    content:'';
+    position:absolute;
+    top:2px; left:2px;
+    width:18px; height:18px;
+    border-radius:50%;
+    background:#fff;
+    transition: transform .15s;
+  }
+  .switch.on::after{ transform: translateX(18px); }
+
+  button{
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 14px;
+    border: none;
+    border-radius: 8px;
+    padding: 12px 18px;
+    cursor: pointer;
+    transition: opacity .15s, transform .1s;
+  }
+  button:active{ transform: scale(0.98); }
+  button:disabled{ opacity: 0.4; cursor: not-allowed; }
+
+  .btn-primary{
+    background: var(--accent);
+    color: #fff;
+    width: 100%;
+  }
+  .btn-primary:hover:not(:disabled){ background: var(--accent-dim); }
+
+  .btn-ghost{
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--text);
+  }
+
+  .status{
+    font-family: var(--mono);
+    font-size: 12.5px;
+    margin-top: 14px;
+    padding: 10px 12px;
+    border-radius: 7px;
+    display:none;
+  }
+  .status.show{ display:block; }
+  .status.info{ background: rgba(255,255,255,0.05); color: var(--text-dim); }
+  .status.ok{ background: rgba(61,220,132,0.1); color: var(--ok); }
+  .status.err{ background: rgba(255,90,54,0.1); color: var(--accent); }
+
+  .result{
+    margin-top: 18px;
+    display:none;
+  }
+  .result.show{ display:block; }
+  .result video{ max-width: 320px; }
+  .result-actions{
+    display:flex;
+    gap:10px;
+    margin-top: 10px;
+  }
+
+  .hidden{ display:none !important; }
+
+  footer{
+    text-align:center;
+    color: var(--text-dim);
+    font-size: 12px;
+    margin-top: 40px;
+    font-family: var(--mono);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1><span class="dot"></span>Clipper</h1>
+    <span class="sub">v0.1 — local build</span>
+  </header>
+
+  <!-- STEP 1: Upload -->
+  <div class="panel" id="uploadPanel">
+    <h2>01 / Upload video</h2>
+    <div class="dropzone" id="dropzone">
+      <p class="big">Klik atau drag video ke sini</p>
+      <p>MP4, MOV, MKV, AVI, WEBM — maks 1GB</p>
+      <input type="file" id="fileInput" accept="video/*" />
+    </div>
+  </div>
+
+  <!-- STEP 2: Editor (hidden until upload done) -->
+  <div class="panel hidden" id="editorPanel">
+    <h2>02 / Potong & atur klip</h2>
+    <div class="editor">
+      <div>
+        <video id="preview" controls></video>
+        <div style="margin-top:10px; font-family: var(--mono); font-size:12px; color: var(--text-dim);" id="videoMeta"></div>
+      </div>
+      <div>
+        <div class="field">
+          <label>Nama file asli</label>
+          <input type="text" id="origName" disabled />
+        </div>
+        <div class="row2">
+          <div class="field">
+            <label>Mulai (detik)</label>
+            <input type="number" id="startTime" min="0" step="0.1" value="0" />
+          </div>
+          <div class="field">
+            <label>Selesai (detik)</label>
+            <input type="number" id="endTime" min="0" step="0.1" value="15" />
+          </div>
+        </div>
+
+        <div class="toggle-row">
+          <span>Crop vertikal (9:16) — TikTok/Shorts/Reels</span>
+          <div class="switch on" id="verticalSwitch"></div>
+        </div>
+
+        <div class="field">
+          <label>Caption (opsional)</label>
+          <input type="text" id="captionInput" placeholder="Teks yang muncul di video..." />
+        </div>
+
+        <div class="field">
+          <label>Posisi caption</label>
+          <select id="captionPosition">
+            <option value="bottom">Bawah</option>
+            <option value="center">Tengah</option>
+            <option value="top">Atas</option>
+          </select>
+        </div>
+
+        <button class="btn-primary" id="clipBtn">Potong klip ini</button>
+
+        <div class="status" id="status"></div>
+
+        <div class="result" id="result">
+          <video id="resultVideo" controls></video>
+          <div class="result-actions">
+            <a id="downloadLink" href="#" download>
+              <button class="btn-ghost">Download klip</button>
+            </a>
+            <button class="btn-ghost" id="newClipBtn">Buat klip lain dari video ini</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer>dibuat buat dipakai sendiri — bukan produk publik</footer>
+</div>
+
+<script>
+const API_BASE = window.location.origin; // backend served from same origin
+
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const uploadPanel = document.getElementById('uploadPanel');
+const editorPanel = document.getElementById('editorPanel');
+const preview = document.getElementById('preview');
+const videoMeta = document.getElementById('videoMeta');
+const origName = document.getElementById('origName');
+const startTime = document.getElementById('startTime');
+const endTime = document.getElementById('endTime');
+const verticalSwitch = document.getElementById('verticalSwitch');
+const captionInput = document.getElementById('captionInput');
+const captionPosition = document.getElementById('captionPosition');
+const clipBtn = document.getElementById('clipBtn');
+const statusEl = document.getElementById('status');
+const resultEl = document.getElementById('result');
+const resultVideo = document.getElementById('resultVideo');
+const downloadLink = document.getElementById('downloadLink');
+const newClipBtn = document.getElementById('newClipBtn');
+
+let currentFileId = null;
+let verticalOn = true;
+
+verticalSwitch.addEventListener('click', () => {
+  verticalOn = !verticalOn;
+  verticalSwitch.classList.toggle('on', verticalOn);
+});
+
+dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('drag'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag'));
+dropzone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropzone.classList.remove('drag');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', (e) => {
+  if (e.target.files.length) handleFile(e.target.files[0]);
+});
+
+function showStatus(msg, type = 'info') {
+  statusEl.textContent = msg;
+  statusEl.className = `status show ${type}`;
+}
+function hideStatus(){ statusEl.className = 'status'; }
+
+async function handleFile(file) {
+  showStatus('Mengupload video...', 'info');
+  const formData = new FormData();
+  formData.append('video', file);
+
+  try {
+    const res = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Upload gagal');
+
+    currentFileId = data.fileId;
+    origName.value = data.originalName;
+    videoMeta.textContent = `Durasi: ${data.duration?.toFixed(1)}s · Resolusi: ${data.width}x${data.height}`;
+    endTime.value = Math.min(15, Math.floor(data.duration || 15));
+    endTime.max = data.duration;
+    startTime.max = data.duration;
+
+    preview.src = URL.createObjectURL(file);
+    uploadPanel.classList.add('hidden');
+    editorPanel.classList.remove('hidden');
+    hideStatus();
+  } catch (err) {
+    showStatus('Gagal upload: ' + err.message, 'err');
+  }
+}
+
+clipBtn.addEventListener('click', async () => {
+  if (!currentFileId) return;
+  const s = parseFloat(startTime.value);
+  const e = parseFloat(endTime.value);
+  if (isNaN(s) || isNaN(e) || e <= s) {
+    showStatus('Waktu selesai harus lebih besar dari waktu mulai.', 'err');
+    return;
+  }
+
+  clipBtn.disabled = true;
+  showStatus('Memotong & memproses video... ini bisa beberapa detik sampai menit tergantung durasi.', 'info');
+  resultEl.classList.remove('show');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/clip`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fileId: currentFileId,
+        startTime: s,
+        endTime: e,
+        vertical: verticalOn,
+        caption: captionInput.value,
+        captionPosition: captionPosition.value,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Gagal memproses');
+
+    showStatus('Klip berhasil dibuat!', 'ok');
+    resultVideo.src = API_BASE + data.clipUrl;
+    downloadLink.href = API_BASE + data.clipUrl;
+    downloadLink.setAttribute('download', data.fileName);
+    resultEl.classList.add('show');
+  } catch (err) {
+    showStatus('Gagal: ' + err.message, 'err');
+  } finally {
+    clipBtn.disabled = false;
+  }
+});
+
+newClipBtn.addEventListener('click', () => {
+  resultEl.classList.remove('show');
+  hideStatus();
+});
+</script>
+</body>
+</html>
