@@ -1,1 +1,6 @@
-
+# Untuk Railway / Render:
+# - Root directory: server
+# - Build command: npm install
+# - Start command: npm start
+# - Pastikan ffmpeg tersedia di environment (Railway & Render biasanya sudah ada,
+#   kalau tidak, tambahkan buildpack/nixpacks config di bawah)
