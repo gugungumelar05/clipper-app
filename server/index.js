@@ -67,34 +67,50 @@ function getVideoInfo(filePath) {
 // silent-looking failures (403 / "Sign in to confirm you're not a bot" /
 // nsig extraction failed). Updating to the latest release on startup fixes
 // most of these without needing to touch nixpacks.toml again.
+// Railway's Railpack builder doesn't persist files written to system paths
+// like /usr/local/bin between the build and runtime image layers. Files
+// inside the project directory (downloaded during the build command) DO
+// persist, so we look for the yt-dlp binary there first, falling back to
+// the system PATH in case it's installed some other way (e.g. Nixpacks).
+const LOCAL_YTDLP_PATH = path.join(__dirname, "yt-dlp");
+
+function resolveYtDlpBinary() {
+  if (fs.existsSync(LOCAL_YTDLP_PATH)) return LOCAL_YTDLP_PATH;
+  return "yt-dlp"; // fall back to system PATH
+}
+
 let ytDlpReady = false;
 let ytDlpVersionInfo = "belum dicek";
+let ytDlpBin = "yt-dlp";
 
 async function ensureYtDlpUpToDate() {
+  ytDlpBin = resolveYtDlpBinary();
+  console.log("Mencoba pakai yt-dlp dari:", ytDlpBin);
+
   try {
-    const { stdout: beforeVersion } = await execAsync("yt-dlp --version");
+    const { stdout: beforeVersion } = await execAsync(`"${ytDlpBin}" --version`);
     console.log("yt-dlp version (sebelum update):", beforeVersion.trim());
 
     // -U updates yt-dlp itself to the latest release if installed via pip/binary.
     // This can fail silently on some package managers (e.g. Nix-managed binaries
     // that are read-only) - that's fine, we just log it and continue.
     try {
-      const { stdout: updateOut } = await execAsync("yt-dlp -U", { timeout: 60 * 1000 });
+      const { stdout: updateOut } = await execAsync(`"${ytDlpBin}" -U`, { timeout: 60 * 1000 });
       console.log("yt-dlp self-update:", updateOut.trim());
     } catch (updateErr) {
       console.warn(
-        "yt-dlp -U gagal (mungkin binary read-only dari Nix), lanjut pakai versi terpasang:",
+        "yt-dlp -U gagal (mungkin binary read-only), lanjut pakai versi terpasang:",
         updateErr.message
       );
     }
 
-    const { stdout: afterVersion } = await execAsync("yt-dlp --version");
+    const { stdout: afterVersion } = await execAsync(`"${ytDlpBin}" --version`);
     ytDlpVersionInfo = afterVersion.trim();
     ytDlpReady = true;
-    console.log("yt-dlp version (siap dipakai):", ytDlpVersionInfo);
+    console.log("yt-dlp version (siap dipakai):", ytDlpVersionInfo, "| path:", ytDlpBin);
   } catch (err) {
     ytDlpReady = false;
-    ytDlpVersionInfo = "TIDAK DITEMUKAN: " + err.message;
+    ytDlpVersionInfo = "TIDAK DITEMUKAN (path: " + ytDlpBin + "): " + err.message;
     console.error(
       "yt-dlp tidak ditemukan / gagal dijalankan saat startup. Endpoint /api/download-from-url tidak akan berfungsi.",
       err.message
@@ -244,7 +260,7 @@ app.post("/api/download-from-url", async (req, res) => {
     // --no-check-certificates and a desktop user-agent reduce false-positive blocks.
     const safeUrl = url.trim().replace(/"/g, "");
     const cmd = [
-      "yt-dlp",
+      `"${ytDlpBin}"`,
       `-f "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/best"`,
       `--merge-output-format mp4`,
       `--extractor-args "youtube:player_client=android,web"`,
@@ -320,7 +336,7 @@ app.get("/api/preview/:fileId", (req, res) => {
 
 // Health check - now also reports yt-dlp status, useful for quick diagnosis
 app.get("/api/health", (req, res) =>
-  res.json({ status: "ok", ytDlpReady, ytDlpVersionInfo })
+  res.json({ status: "ok", ytDlpReady, ytDlpVersionInfo, ytDlpBin })
 );
 
 // Cleanup endpoint: delete an uploaded source file once done
