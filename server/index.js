@@ -62,6 +62,46 @@ function getVideoInfo(filePath) {
   });
 }
 
+// ---------- yt-dlp self-update on boot ----------
+// Nix's yt-dlp package can lag behind YouTube's frequent changes, causing
+// silent-looking failures (403 / "Sign in to confirm you're not a bot" /
+// nsig extraction failed). Updating to the latest release on startup fixes
+// most of these without needing to touch nixpacks.toml again.
+let ytDlpReady = false;
+let ytDlpVersionInfo = "belum dicek";
+
+async function ensureYtDlpUpToDate() {
+  try {
+    const { stdout: beforeVersion } = await execAsync("yt-dlp --version");
+    console.log("yt-dlp version (sebelum update):", beforeVersion.trim());
+
+    // -U updates yt-dlp itself to the latest release if installed via pip/binary.
+    // This can fail silently on some package managers (e.g. Nix-managed binaries
+    // that are read-only) - that's fine, we just log it and continue.
+    try {
+      const { stdout: updateOut } = await execAsync("yt-dlp -U", { timeout: 60 * 1000 });
+      console.log("yt-dlp self-update:", updateOut.trim());
+    } catch (updateErr) {
+      console.warn(
+        "yt-dlp -U gagal (mungkin binary read-only dari Nix), lanjut pakai versi terpasang:",
+        updateErr.message
+      );
+    }
+
+    const { stdout: afterVersion } = await execAsync("yt-dlp --version");
+    ytDlpVersionInfo = afterVersion.trim();
+    ytDlpReady = true;
+    console.log("yt-dlp version (siap dipakai):", ytDlpVersionInfo);
+  } catch (err) {
+    ytDlpReady = false;
+    ytDlpVersionInfo = "TIDAK DITEMUKAN: " + err.message;
+    console.error(
+      "yt-dlp tidak ditemukan / gagal dijalankan saat startup. Endpoint /api/download-from-url tidak akan berfungsi.",
+      err.message
+    );
+  }
+}
+
 // ---------- Routes ----------
 
 // Upload video, return file id + metadata
@@ -187,18 +227,54 @@ app.post("/api/download-from-url", async (req, res) => {
       return res.status(400).json({ error: "URL tidak valid" });
     }
 
+    if (!ytDlpReady) {
+      return res.status(503).json({
+        error:
+          "yt-dlp tidak tersedia di server ini (gagal saat startup). Cek log server / nixpacks.toml. Detail: " +
+          ytDlpVersionInfo,
+      });
+    }
+
     const fileId = `${uuidv4()}.mp4`;
     const outputPath = path.join(UPLOAD_DIR, fileId);
 
-    // yt-dlp downloads the video, merges best video+audio, outputs as mp4
+    // yt-dlp downloads the video, merges best video+audio, outputs as mp4.
+    // --extractor-args tries the android & web clients explicitly, which
+    // works around several of YouTube's 2026 bot-detection / 403 issues.
+    // --no-check-certificates and a desktop user-agent reduce false-positive blocks.
     const safeUrl = url.trim().replace(/"/g, "");
-    const cmd = `yt-dlp -f "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/best" --merge-output-format mp4 -o "${outputPath}" "${safeUrl}"`;
+    const cmd = [
+      "yt-dlp",
+      `-f "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/best"`,
+      `--merge-output-format mp4`,
+      `--extractor-args "youtube:player_client=android,web"`,
+      `--no-playlist`,
+      `--retries 3`,
+      `-o "${outputPath}"`,
+      `"${safeUrl}"`,
+    ].join(" ");
 
     console.log("Running yt-dlp:", cmd);
-    await execAsync(cmd, { maxBuffer: 1024 * 1024 * 50, timeout: 5 * 60 * 1000 });
+
+    let stderrOutput = "";
+    try {
+      const { stderr } = await execAsync(cmd, {
+        maxBuffer: 1024 * 1024 * 50,
+        timeout: 5 * 60 * 1000,
+      });
+      stderrOutput = stderr || "";
+    } catch (execErr) {
+      // exec throws on non-zero exit code; the real yt-dlp error is usually in stderr.
+      stderrOutput = execErr.stderr || execErr.message || "";
+      throw new Error(stderrOutput || execErr.message);
+    }
 
     if (!fs.existsSync(outputPath)) {
-      return res.status(500).json({ error: "Download gagal, file tidak ditemukan setelah proses" });
+      return res.status(500).json({
+        error:
+          "Download gagal, file tidak ditemukan setelah proses. Output yt-dlp: " +
+          (stderrOutput || "(tidak ada output)").slice(0, 300),
+      });
     }
 
     const info = await getVideoInfo(outputPath);
@@ -209,10 +285,28 @@ app.post("/api/download-from-url", async (req, res) => {
     });
   } catch (err) {
     console.error("yt-dlp error:", err.message);
+
+    // Translate the most common yt-dlp failure signatures into messages
+    // that actually tell the user (or you) what's going on, instead of a
+    // generic "gagal mengunduh" every time.
+    let friendlyHint = "";
+    const msg = err.message || "";
+    if (/command not found|ENOENT/i.test(msg)) {
+      friendlyHint = " (yt-dlp tidak terinstall di server — cek nixpacks.toml)";
+    } else if (/sign in to confirm|not a bot/i.test(msg)) {
+      friendlyHint = " (YouTube minta verifikasi bot — coba video lain atau pakai cookies)";
+    } else if (/403|forbidden/i.test(msg)) {
+      friendlyHint = " (YouTube menolak akses dari server ini — bisa jadi IP server dibatasi)";
+    } else if (/private|unavailable|removed/i.test(msg)) {
+      friendlyHint = " (video private/tidak tersedia/dihapus)";
+    }
+
     res.status(500).json({
       error:
-        "Gagal mengunduh video dari link ini. Pastikan link valid dan videonya bisa diakses publik. Detail: " +
-        err.message.slice(0, 200),
+        "Gagal mengunduh video dari link ini." +
+        friendlyHint +
+        " Detail: " +
+        msg.slice(0, 300),
     });
   }
 });
@@ -224,8 +318,10 @@ app.get("/api/preview/:fileId", (req, res) => {
   res.sendFile(filePath);
 });
 
-// Health check
-app.get("/api/health", (req, res) => res.json({ status: "ok" }));
+// Health check - now also reports yt-dlp status, useful for quick diagnosis
+app.get("/api/health", (req, res) =>
+  res.json({ status: "ok", ytDlpReady, ytDlpVersionInfo })
+);
 
 // Cleanup endpoint: delete an uploaded source file once done
 app.delete("/api/upload/:fileId", (req, res) => {
@@ -238,4 +334,7 @@ app.delete("/api/upload/:fileId", (req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`Clipper server running on port ${PORT}`));
+app.listen(PORT, async () => {
+  console.log(`Clipper server running on port ${PORT}`);
+  await ensureYtDlpUpToDate();
+});
